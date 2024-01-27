@@ -1,0 +1,893 @@
+;------------------------------------------------
+;
+; Atari VCS Game 
+; by Author
+;
+;------------------------------------------------
+	processor 	6502
+	include 	vcs.h
+	include 	macro.h
+
+;------------------------------------------------
+; Constants
+;------------------------------------------------
+BLACK = #$00
+missileTimeLimit = #5
+
+;------------------------------------------------
+; RAM
+;------------------------------------------------
+    SEG.U   variables
+    ORG     $80
+
+bgcolor			.byte
+frame			.byte
+sprite0gfx 		ds 2
+sprite1gfx 		ds 2
+p0gfx 			.byte
+p1gfx 			.byte
+p0color 		.byte
+p1color 		.byte
+p0y 			.byte
+p1y 			.byte
+gfx0Index 		.byte
+gfx1Index 		.byte
+animIndex 		.byte
+gameMode 		.byte
+m0HMMNext 		.byte
+m1HMMNext 		.byte
+m0 				.byte			;%00000010 enables missile, %00000000 disables
+missile0y 		.byte
+m0temp	 		.byte			;1 = on, 0 = off
+m1 				.byte
+m1temp			.byte
+missile1y 		.byte
+
+framep0Counter 	.byte
+framep1Counter 	.byte
+
+p0score 		.byte
+p0scoreDelay 	.byte
+p0scoreGfx 		ds 2
+p1score 		.byte
+p1scoreDelay	.byte
+p1scoreGfx		ds 2
+
+	echo [(* - $80)]d, " RAM bytes used"
+
+;------------------------------------------------
+; Start of ROM
+;------------------------------------------------
+	SEG   Bank0
+	ORG   $F000       	; 4k ROM start point
+
+Start 
+	CLEAN_START			; Clear RAM and Registers
+	lda		#$FF
+	sta		AUDV0
+	sta		AUDV1
+	lda 	#%00000010
+	sta 	RESMP0
+	sta 	RESMP1
+	
+	lda 	#40
+	sta 	p0y
+	lda 	#40
+	sta 	p1y
+	lda		#$36
+	sta		bgcolor
+	
+	lda		#<Digits
+	sta		p0scoreGfx
+	sta 	p1scoreGfx
+	lda		#>Digits
+	sta		p0scoreGfx+1
+	sta 	p1scoreGfx+1
+	
+
+;------------------------------------------------
+; Vertical Blank
+;------------------------------------------------
+MainLoop
+	;***** Vertical Sync routine
+	lda		#2
+	sta  	VSYNC 	; begin vertical sync, hold for 3 lines
+	sta  	WSYNC 	; 1st line of vsync
+	sta  	WSYNC 	; 2nd line of vsync
+	sta  	WSYNC 	; 3rd line of vsync
+	lda  	#43   	; set up timer for end of vblank
+	sta  	TIM64T
+	lda 	#0
+	sta  	VSYNC 	; turn off vertical sync - also start of vertical blank
+
+	;***** Vertical Blank code goes here
+	
+	lda 	#$00
+	sta 	PF0
+	sta 	PF1
+	sta 	PF2
+	sta 	HMP0
+	sta 	HMP1
+	lda 	bgcolor
+	sta 	COLUBK
+	lda 	#$C3
+	sta 	COLUPF	
+	lda 	#%00010000
+	sta 	NUSIZ0
+	sta 	NUSIZ1
+	
+	
+	
+CheckGameMode
+	lda 	gameMode
+	cmp 	#0
+	bne 	EndCheckGameMode
+CheckResetSwitch
+	lda		#1
+	bit		SWCHB
+	bne		.endCheckResetSwitch
+.resetGame
+	lda 	#9
+	sta 	p0score
+	sta 	p1score
+	lda 	#1
+	sta 	gameMode
+	lda 	#40
+	sta 	p0y
+	lda 	#40
+	sta 	p1y
+	
+.endCheckResetSwitch
+	jmp 	.waitForVBlank
+EndCheckGameMode
+;-------------
+;PLAYER INPUT
+;-------------
+	inc 	frame
+	lda 	frame
+	and 	#4
+	cmp 	#4
+	beq 	.cont
+	jmp 	EndCheck
+.cont
+	lda 	#0
+	sta 	frame
+	
+;---------
+;ANIMATION
+;---------
+	inc 	animIndex
+	lda 	animIndex
+	and 	#1
+	tax
+	lda 	PlayerFrames,x
+	sta 	sprite0gfx
+	sta 	sprite1gfx
+	lda 	#>PlayerGfx
+	sta 	sprite0gfx+1
+	sta 	sprite1gfx+1
+
+
+
+CheckJoystickInput
+CheckJoy0Fire
+	lda 	#%10000000
+	bit 	INPT4
+	bne 	.endCheckJoy0Fire		;branch if space is not pressed
+	lda 	m0temp				  ;checks if missle 0 is shot already, branch if shot
+	bne 	.endCheckJoy0Fire	   ;branches if m0temp is 1
+	;checked if fire button is pressed and if missile is already firing
+	;turn on missile
+	lda 	#1
+	sta 	m0temp					;m0temp is now on
+	lda 	#0		
+	sta 	framep0Counter
+	lda 	p0y
+	sbc 	#5
+	sta 	missile0y
+	lda 	#0					
+	sta 	RESMP0					;releases missile from player0 location
+	lda 	m0HMMNext
+	sta 	HMM0
+.endCheckJoy0Fire
+CheckJoy0Up
+	lda		#%00010000
+	bit		SWCHA
+	bne		.endCheckJoy0Up
+	lda		p0y
+	cmp		#70				;sky height
+	beq		.endCheckJoy0Up
+	inc		p0y
+	inc		p0y
+.endCheckJoy0Up
+CheckJoy0Down
+	lda		#%00100000
+	bit		SWCHA
+	bne		.endCheckJoy0Down
+	lda		p0y
+	cmp		#20
+	beq		.endCheckJoy0Down
+	dec		p0y
+	dec		p0y
+.endCheckJoy0Down
+CheckJoy0Left
+	lda		#%01000000
+	bit		SWCHA
+	bne		.endCheckJoy0Left
+	lda		#%00001000		
+	sta		REFP0 				;does reflection
+	lda 	#%00110000			;this is for missiles
+	sta 	m0HMMNext			
+	lda		#%00100000		
+	sta		HMP0			
+.endCheckJoy0Left
+CheckJoy0Right
+    lda 	#%10000000
+    bit 	SWCHA
+	bne		.endCheckJoy0Right
+	lda 	#0
+	sta		REFP0
+	lda 	#%11010000
+	sta 	m0HMMNext
+	lda		#%11100000
+	sta		HMP0
+.endCheckJoy0Right
+
+CheckJoy1Fire
+	lda 	#%10000000
+	bit 	INPT5
+	bne 	.endCheckJoy1Fire	;branch if fire button is not pressed
+	lda 	m1temp				;branch if m1temp = 1, meaning it is on
+	
+	;what i want it to do
+	;check if m1temp is 1(on), if it is go to endCheckJoy1Fire
+	;if m1temp is 0(off), i want to skip the branch instruction
+	
+	bne 	.endCheckJoy1Fire		
+	;code from above
+	lda 	#0
+	sta 	framep1Counter
+	lda 	p1y
+	sbc 	#5
+	sta 	missile1y
+	lda 	#0					
+	sta 	RESMP1					;releases missile from player0 location
+	lda 	m1HMMNext
+	sta 	HMM1
+	lda 	#1						;enables missile
+	sta 	m1temp
+.endCheckJoy1Fire
+CheckJoy1Up
+	lda		#%00000001
+	bit		SWCHA
+	bne		.endCheckJoy1Up
+	lda		p1y
+	cmp		#70				;sky height
+	beq		.endCheckJoy1Up
+	inc		p1y
+	inc		p1y
+.endCheckJoy1Up
+CheckJoy1Down
+	lda		#%00000010
+	bit		SWCHA
+	bne		.endCheckJoy1Down
+	lda		p1y
+	cmp		#20
+	beq		.endCheckJoy1Down
+	dec		p1y
+	dec		p1y
+.endCheckJoy1Down
+CheckJoy1Left
+	lda		#%00000100
+	bit		SWCHA
+	bne		.endCheckJoy1Left
+	lda		#%00001000		
+	sta		REFP1				;does reflection
+	lda 	#%00110000
+	sta 	m1HMMNext			
+	lda		#%00100000		
+	sta		HMP1			
+.endCheckJoy1Left
+CheckJoy1Right
+    lda 	#%00001000
+    bit 	SWCHA
+	bne		.endCheckJoy1Right
+	lda 	#0
+	sta		REFP1
+	lda 	#%11010000
+	sta 	m1HMMNext
+	lda		#%11100000
+	sta		HMP1
+.endCheckJoy1Right
+
+
+CheckCollisions
+checkCollisionM1P0		;checks collision between missile 1 and player 0
+	lda		CXM1P
+	and		#$80
+	beq		.noCollision
+	lda		#%0100
+	sta		AUDC0
+	sta		AUDF0
+	sta		AUDV0
+	
+	; Handle scoring
+.scoreP0
+	lda		p0scoreDelay
+	bne		.endScoreP0
+	dec		p0score			
+	lda		#2
+	sta		p0scoreDelay		; start the score delay to avoid multiple counting
+	;TODO: check if game over
+.endScoreP0
+	bne 	EndCheckCollisions0
+.noCollision
+	lda		#0
+	sta		AUDV0
+EndCheckCollisions0
+checkCollisionM0P1		;checks collision between missile 0 and player 1
+	lda		CXM0P
+	and		#$80
+	beq		.noCollision1
+	lda		#%0100
+	sta		AUDC0
+	sta		AUDF0
+	sta		AUDV0
+	
+	; Handle scoring
+.scoreP1
+	lda		p1scoreDelay
+	bne		.endScoreP1
+	dec		p1score			
+	lda		#2
+	sta		p1scoreDelay		; start the score delay to avoid multiple counting
+	;TODO: check if game over
+.endScoreP1
+	bne 	EndCheckCollisions1
+.noCollision1
+	lda		#0
+	sta		AUDV0
+EndCheckCollisions1
+
+StartMissile
+P0MissileCounter
+	lda 	m0temp					;0 = off, 1 = on
+	beq 	EndMissile0			;if(m0 == 0), branch		if m0 off, branch
+.startMissileCounter
+	;if the missile is on due to fire button being pressed
+	inc 	framep0Counter
+	lda 	framep0Counter
+	cmp		missileTimeLimit		;value of #100
+	bne 	EndMissile0
+.noMissile0
+	lda 	#0
+	sta 	m0temp
+	lda 	#%00000010
+	sta 	RESMP0
+EndMissile0
+P1MissileCounter
+	lda 	m1temp				;if m0temp is 0(off), skip framecounter
+	beq 	EndMissile1
+.startMissile1FrameCounter
+	inc 	framep1Counter
+	lda 	framep1Counter
+	cmp 	missileTimeLimit
+	bne 	EndMissile1
+	
+	;if framep1Counter and missileTimeLimit are not equal (meaning that the missile time limit is still not up), branch to the end of the missile code, else skip the instruction
+	
+	;set up audio later
+.noMissile1
+	lda 	#0
+	sta 	m1temp
+	lda 	#%00000010
+	sta 	RESMP1
+EndMissile1
+
+
+
+; Handle the score 
+; ------------------
+	; Decay the score delay as needed
+	dec		p0scoreDelay
+	bpl		.skipP0ScoreDelayDec
+	lda		#0
+	sta		p0scoreDelay
+.skipP0ScoreDelayDec	
+
+	dec		p1scoreDelay
+	bpl		.skipP1ScoreDelayDec
+	lda		#0
+	sta		p1scoreDelay
+.skipP1ScoreDelayDec
+
+	; Check if the game has ended
+CheckGameOver
+.checkWinP0
+	lda		p0score
+	cmp		#0
+	bne		.checkWinP1
+	lda		#0
+	sta		gameMode
+	jsr		ResetGameValues
+.checkWinP1
+	lda		p1score
+	cmp		#0
+	bne		EndCheckGameOver
+	lda		#0
+	sta		gameMode
+	jsr		ResetGameValues
+EndCheckGameOver
+	
+	; Load and set the correct pointer for the score for each player
+	ldx		p0score
+	lda		DigitOffsets,x
+	sta		p0scoreGfx
+	lda		#>Digits
+	sta		p0scoreGfx+1
+	
+	ldx		p1score
+	lda		DigitOffsets,x
+	sta		p1scoreGfx
+	lda		#>Digits
+	sta		p1scoreGfx+1
+
+	
+EndCheck
+.waitForVBlank
+	lda		INTIM
+	bne		.waitForVBlank
+	sta		WSYNC
+	sta 	HMOVE
+	sta 	CXCLR
+	sta		VBLANK
+
+;------------------------------------------------
+; Kernel
+;------------------------------------------------	
+;289 when sprites are not drawn on same scanline
+;276 when drawn on same scanline
+;want 262, need 27
+
+;total scanlines is 110 right now
+;usually supposed to be 193
+DrawScreen
+Score	
+	lda		#0
+	sta		COLUBK		; black here also hides the HMOVE artifact
+	lda		#$7A
+	sta		COLUP0
+	lda 	#$40
+	sta 	COLUP1
+	lda 	%10
+	sta 	CTRLPF
+	sta		WSYNC
+	sta		WSYNC		; just a little buffer 
+
+	ldy		#4
+.score
+	jsr		DisplayScore
+	sta		WSYNC		
+	jsr		DisplayScore
+	dey
+	sta		WSYNC
+	bpl		.score
+
+	lda 	#0
+	sta 	PF0
+	sta 	PF1
+	sta 	PF2
+	sta 	HMP0
+	sta 	HMP1
+	lda 	bgcolor
+	sta 	COLUBK
+	lda 	#$C3
+	sta 	COLUP0
+	sta 	COLUP1
+	
+	ldx		#23		; Kernel goes here
+.sky
+	dex
+	sta 	WSYNC
+	bne 	.sky
+	
+	ldx 	#12
+.sunset
+	lda 	Sky-1,x
+	sta 	COLUBK
+	lda 	CactusPF0-1,x
+	sta 	PF0
+	lda 	CactusPF1-1,x
+	sta 	PF1
+	lda 	CactusPF2-1,x
+	sta 	PF2
+	dex
+	sta 	WSYNC
+	bne 	.sunset
+	
+	lda 	#0
+	sta 	PF0
+	sta 	PF1
+	sta 	PF2
+	lda 	#$FE
+	sta 	COLUBK
+	sta 	COLUP0
+	sta 	COLUP1
+	sta 	WSYNC
+	
+	;122
+	ldx 	#70
+.ground
+	lda 	p0gfx
+	sta 	GRP0
+	lda 	p0color
+	sta 	COLUP0
+	lda 	p1gfx
+	sta 	GRP1
+	lda 	p1color
+	sta 	COLUP1
+	lda 	m0
+	sta 	ENAM0
+	lda 	m1
+	sta 	ENAM1
+	
+	cpx 	p0y
+	bne 	.loadSprite0
+	lda 	#13
+	sta 	gfx0Index
+.loadSprite0
+	lda 	gfx0Index
+	cmp 	#$FF
+	beq 	.noSprite0
+	tay
+	lda 	(sprite0gfx),y
+	sta 	p0gfx
+	lda 	Player0Colors,y
+	sta 	p0color
+	dec 	gfx0Index
+	jmp 	.endSprite0
+.noSprite0
+	lda 	#0
+	sta 	p0gfx
+.endSprite0
+
+	cpx 	p1y
+	bne 	.loadSprite1
+	lda 	#13
+	sta 	gfx1Index
+.loadSprite1
+	lda 	gfx1Index
+	cmp 	#$FF
+	beq 	.noSprite1
+	tay
+	lda 	(sprite1gfx),y
+	sta 	p1gfx
+	lda 	Player1Colors,y
+	sta 	p1color
+	dec 	gfx1Index
+	jmp 	.endSprite1
+.noSprite1
+	lda 	#0
+	sta 	p1gfx
+.endSprite1
+
+	;missile code
+	lda 	#0
+	cpx 	missile0y	
+	bne 	.noM0
+	lda 	#%00000010
+.noM0
+	sta 	m0
+	lda 	#0
+	cpx 	missile1y
+	bne 	.noM1
+	lda 	#%00000010
+.noM1
+	sta 	m1
+
+	dex
+	sta 	WSYNC
+	bne 	.ground
+	
+	ldx 	#5
+
+.end
+	dex
+	sta 	WSYNC
+	bne 	.end	
+
+
+;------------------------------------------------
+; Overscan
+;------------------------------------------------
+	lda		#%01000010
+	sta		WSYNC
+	sta		VBLANK
+    lda		#36
+    sta		TIM64T
+
+	;***** Overscan Code goes here
+
+.waitForOverscan
+	lda     INTIM
+	bne     .waitForOverscan
+
+	jmp		MainLoop
+	
+	
+;------------------------------------------------
+;Subroutines
+;------------------------------------------------
+DisplayScore
+	; player 1 score
+	lda		(p0scoreGfx),y
+	sta		PF1	
+	nop
+	nop
+	nop
+	nop
+	lda		(p1scoreGfx),y
+	sta		PF1
+	rts
+
+ResetGameValues
+	lda		#0
+	sta		AUDF0
+	sta		AUDV0
+	sta		AUDC0
+	sta		AUDF1
+	sta		AUDV1
+	sta		AUDC1
+	sta		m1
+	sta		m0
+	sta		ENAM0
+	sta		ENAM1
+	sta		HMM0
+	sta		HMM1
+	rts
+
+;------------------------------------------------
+; ROM Tables
+;------------------------------------------------
+	;***** ROM tables go here
+CactusPF0
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#%00010000
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+	
+CactusPF1
+	.byte 	#%00001000
+	.byte 	#%00001000
+	.byte 	#%00111000
+	.byte 	#%00101000
+	.byte 	#%00001000
+	.byte 	#%00001000
+	.byte 	#%00001000
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+	
+CactusPF2
+	.byte 	#%00001000
+	.byte 	#%00001000
+	.byte 	#%00001110
+	.byte 	#%00001010
+	.byte 	#%00001000
+	.byte 	#%00111000
+	.byte 	#%00101000
+	.byte 	#%00001000
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+	.byte 	#0
+
+Sky
+	.byte 	#$1C
+	.byte 	#$1C
+	.byte 	#$1C
+	.byte 	#$1C
+	.byte 	#$1C
+	.byte 	#$1A
+	.byte 	#$1A
+	.byte 	#$1A
+	.byte 	#$2A
+	.byte 	#$2A
+	.byte 	#$38
+	.byte 	#$38
+	
+		
+	
+	align 256
+PlayerGfx	
+Player0 ;14 bytes
+	.byte 	%00000000
+	.byte 	%00011100		;feet
+	.byte 	%00011000		;leg
+	.byte 	%00011000		;leg
+	.byte 	%00011000		;leg
+	.byte 	%01011010		;body
+	.byte 	%01011010		;body
+	.byte 	%00111100		;body
+	.byte 	%00000000
+	.byte 	%00011000		;face
+	.byte 	%00011000		;face
+	.byte 	%00011100		;face
+	.byte 	%00111110		;hat
+	.byte 	%00011000		;hat
+	
+PlayerRunning0 ;14 bytes
+   .byte 	#%00000000
+   .byte 	#$00000000 
+   .byte 	#%01000100 
+   .byte 	#%01100100 
+   .byte 	#%00011000 
+   .byte 	#%00011000 
+   .byte 	#%00111100 
+   .byte 	#%01011000 
+   .byte 	#%00111000 
+   .byte 	#%00000000 
+   .byte 	#%00011000 
+   .byte 	#%00011100 
+   .byte 	#%00111110 
+   .byte 	#%00011000
+   
+PlayerRunning1 ;14 bytes
+   .byte 	#%00000000 
+   .byte 	#%00000000 
+   .byte 	#%00000011 
+   .byte 	#%10000010 
+   .byte 	#%11110100 
+   .byte 	#%00111000 
+   .byte 	#%00111100 
+   .byte 	#%00011000 
+   .byte 	#%00111000 
+   .byte 	#%00000000 
+   .byte 	#%00011000 
+   .byte 	#%00011100 
+   .byte 	#%00111110
+   .byte 	#%00011000 
+   
+PlayerFrames
+	.byte 	<Player0
+	.byte 	<PlayerRunning0
+	.byte 	<PlayerRunning1
+
+Player0Colors
+	.byte 	#$38
+	.byte 	#$38
+	.byte 	#$80
+	.byte 	#$80
+	.byte 	#$80
+	.byte 	#$40
+	.byte 	#$40
+	.byte 	#$40
+	.byte 	#$00
+	.byte 	#$38
+	.byte 	#$38
+	.byte 	#$38
+	.byte 	#$7A
+	.byte 	#$7A
+	
+Player1Colors
+	.byte 	#$34
+	.byte 	#$34
+	.byte 	#$F0
+	.byte 	#$F0
+	.byte 	#$F0
+	.byte 	#$40
+	.byte 	#$40
+	.byte 	#$40
+	.byte 	#$00
+	.byte 	#$34
+	.byte 	#$34
+	.byte 	#$34
+	.byte 	#$40
+	.byte 	#$40
+	
+Digits
+Digit0
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%10100000
+	.byte	%10100000
+	.byte	%11100000
+
+Digit1
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%00100000
+
+Digit2
+	.byte	%11100000
+	.byte	%10000000
+	.byte	%11100000
+	.byte	%00100000
+	.byte	%11100000
+
+Digit3
+	.byte	%11100000
+	.byte	%00100000
+	.byte	%11100000
+	.byte	%00100000
+	.byte	%11100000
+
+Digit4
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%10100000
+
+Digit5
+	.byte	%11100000
+	.byte	%00100000
+	.byte	%11100000
+	.byte	%10000000
+	.byte	%11100000
+
+Digit6
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%11100000
+	.byte	%10000000
+	.byte	%11100000
+
+Digit7
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%11100000
+
+Digit8
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%11100000
+
+Digit9
+	.byte	%00100000
+	.byte	%00100000
+	.byte	%11100000
+	.byte	%10100000
+	.byte	%11100000
+
+DigitOffsets
+	.byte 	<Digit0
+	.byte 	<Digit1
+	.byte 	<Digit2
+	.byte 	<Digit3
+	.byte 	<Digit4
+	.byte 	<Digit5
+	.byte 	<Digit6
+	.byte 	<Digit7
+	.byte 	<Digit8
+	.byte 	<Digit9
+	
+
+	
+
+;------------------------------------------------
+; Interrupt Vectors
+;------------------------------------------------
+	echo [*-$F000]d, " ROM bytes used"
+	ORG    $FFFA
+	.word  Start         ; NMI
+	.word  Start         ; RESET
+	.word  Start         ; IRQ
+    
+	END
